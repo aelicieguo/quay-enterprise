@@ -1,0 +1,55 @@
+---
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  namespace: {{ PROJECT_NAME }}
+  name: {{ CONFIG_APPNAME }}
+  labels:
+    quay-enterprise-component: config-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      quay-enterprise-component: config-app
+  template:
+    metadata:
+      namespace: {{ PROJECT_NAME }}
+      labels:
+        quay-enterprise-component: config-app
+    spec:
+      containers:
+      - name: quay-enterprise-config-app
+        image: {{ QUAY_IMAGE }}
+        ports:
+        - containerPort: 8443
+        command: ["/quay-registry/quay-entrypoint.sh"]
+        args: ["config", "secret"]
+      imagePullSecrets:
+        - name: {{ PULL_SECRET_NAME }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: {{ PROJECT_NAME }}
+  name: {{ CONFIG_APPNAME }}
+spec:
+  type: ClusterIP
+  ports:
+    - protocol: TCP
+      name: https
+      port: 8443 
+      targetPort: {{ CONFIG_CONTAINER_PORT }}
+  selector:
+    quay-enterprise-component: config-app
+---
+apiVersion: v1
+kind: Route
+metadata:
+  name: {{ CONFIG_APPNAME }}
+  namespace: {{ PROJECT_NAME }}
+spec:
+  to:
+    kind: Service
+    name: {{ CONFIG_APPNAME }}
+  tls:
+    termination: passthrough

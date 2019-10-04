@@ -1,0 +1,77 @@
+---
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  namespace: {{ PROJECT_NAME }}
+  name: {{ QUAY_APPNAME }}
+  labels:
+    quay-enterprise-component: app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      quay-enterprise-component: app
+  template:
+    metadata:
+      namespace: {{ PROJECT_NAME }}
+      labels:
+        quay-enterprise-component: app
+    spec:
+      volumes:
+      - name: configvolume
+        secret:
+          secretName: quay-enterprise-config-secret
+          defaultMode: 420
+      - name: clair-trust-ca-secret
+        secret:
+          secretName: clair-trust-ca-secret
+          defaultMode: 420
+      containers:
+      - name: {{ QUAY_APPNAME }}
+        image: {{ QUAY_IMAGE }}
+        ports:
+        - containerPort: {{ QUAY_HTTP_CONTAINER_PORT }}
+        - containerPort: {{ QUAY_HTTPS_CONTAINER_PORT }}
+        volumeMounts:
+        - name: configvolume
+          readOnly: false
+          mountPath: /conf/stack
+        - name: clair-trust-ca-secret
+          readOnly: true
+          mountPath: /etc/pki/ca-trust/source/anchors/ca.crt
+          subPath: ca.crt
+      imagePullSecrets:
+          - name: {{ PULL_SECRET_NAME }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: {{ PROJECT_NAME }}
+  name: {{ QUAY_CLUSTERIP }}
+spec:
+  type: ClusterIP
+  ports:
+    - protocol: TCP
+      name: https
+      port: {{ QUAY_HTTPS_CONTAINER_PORT }}
+      targetPort: {{ QUAY_HTTPS_CONTAINER_PORT }}
+    - protocol: TCP
+      name: http
+      port: {{ QUAY_HTTP_CONTAINER_PORT }}
+      targetPort: {{ QUAY_HTTP_CONTAINER_PORT }}
+  selector:
+    quay-enterprise-component: app
+---
+apiVersion: v1
+kind: Route
+metadata:
+  name: {{ QUAY_APPNAME }}
+  namespace: {{ PROJECT_NAME }}
+spec:
+  port:
+    targetPort: http
+  to:
+    kind: Service
+    name: {{ QUAY_CLUSTERIP }}
+  tls:
+    termination: edge

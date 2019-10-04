@@ -1,0 +1,51 @@
+---
+PROJECT_NAME: quay-enterprise 
+
+### QUAY POSTGRESQL ###
+QUAY_POSTGRESQL_APPNAME: quay-postgresql
+POSTGRESQL_CONTAINER_PORT: 5432
+QUAY_POSTGRESQL_DB: quay
+QUAY_POSTGRESQL_USERNAME: quay
+QUAY_POSTGRESQL_PASSWORD: quay
+QUAY_PV_NAME: quay-postgresql
+QUAY_PVC_NAME: quay-postgresql
+QUAY_PV_SIZE: 30Gi
+QUAY_PV_PATH: /srv/nfs/user-vols/quay/
+QUAY_PV_SERVER: support1.37f1.internal
+POSTGRESQL_IMAGE: registry.access.redhat.com/rhscl/postgresql-10-rhel7:1-35
+
+### QUAY ###
+CONFIG_APPNAME: quay-enterprise-config-app
+CONFIG_CONTAINER_PORT: 8443
+PULL_SECRET_NAME: redhat-quay-pull-secret
+QUAY_IMAGE: quay.io/redhat/quay:v3.1.0
+
+### REDIS ###
+REDIS_APPNAME: quay-enterprise-redis
+REDIS_CONTAINER_PORT: 6379
+REDIS_IMAGE: registry.access.redhat.com/rhscl/redis-32-rhel7
+
+### QUAY ###
+QUAY_APPNAME: quay-enterprise-app
+QUAY_CLUSTERIP: quay-enterprise-clusterip
+QUAY_HTTPS_CONTAINER_PORT: 8443
+QUAY_HTTP_CONTAINER_PORT: 8080
+QUAY_CONFIG_USER: quayconfig
+QUAY_CONFIG_PASSWORD: secret
+QUAY_ADMIN: quayadmin
+QUAY_ADMIN_EMAIL: quayadmin@apps.d887.example.opentlc.om
+QUAY_ADMIN_PASSWORD: quayadmin
+
+### CLAIR ###
+CLAIR_SVC: clair-service
+CLAIR_PV_NAME: clair-postgresql
+CLAIR_PV_SIZE: 30Gi
+CLAIR_PV_PATH: /srv/nfs/user-vols/clair/
+CLAIR_PV_SERVER: support1.37f1.internal
+CLAIR_PVC_NAME: clair-postgresql
+CLAIR_POSTGRESQL_APPNAME: clair-postgresql
+CLAIR_POSTGRESQL_USERNAME: clair
+CLAIR_POSTGRESQL_DB: clair
+CLAIR_POSTGRESQL_PASSWORD: clair
+CLAIR_SCANNER_SECRET: clair-scanner-config-secret
+CLAIR_IMAGE: quay.io/redhat/clair-jwt:v3.0.4

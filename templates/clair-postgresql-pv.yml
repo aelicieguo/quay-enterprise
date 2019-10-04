@@ -1,0 +1,32 @@
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: {{ CLAIR_PV_NAME }}
+spec:
+  accessModes:
+  - ReadWriteOnce
+  capacity:
+    storage: {{ CLAIR_PV_SIZE }}
+  claimRef:
+    apiVersion: v1
+    kind: PersistentVolumeClaim
+    name: {{ CLAIR_PVC_NAME }}
+    namespace: {{ PROJECT_NAME }}
+  nfs:
+    path: {{ CLAIR_PV_PATH }}
+    server: {{ CLAIR_PV_SERVER }}
+  persistentVolumeReclaimPolicy: Retain
+status: {}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ CLAIR_PVC_NAME }}
+  namespace: {{ PROJECT_NAME }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ CLAIR_PV_SIZE }}

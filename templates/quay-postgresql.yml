@@ -1,0 +1,49 @@
+---
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  name: {{ QUAY_POSTGRESQL_APPNAME }}
+  namespace: {{ PROJECT_NAME }}
+spec:
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: {{ QUAY_POSTGRESQL_APPNAME }}
+    spec:
+      containers:
+        - name: {{ QUAY_POSTGRESQL_APPNAME }}
+          image: {{ POSTGRESQL_IMAGE }}
+          imagePullPolicy: "IfNotPresent"
+          ports:
+          - containerPort: {{ POSTGRESQL_CONTAINER_PORT }}
+          env:
+          - name: POSTGRESQL_USER
+            value: {{ QUAY_POSTGRESQL_USERNAME }}
+          - name: POSTGRESQL_DATABASE
+            value: {{ QUAY_POSTGRESQL_DB }}
+          - name: POSTGRESQL_PASSWORD
+            value: {{ QUAY_POSTGRESQL_PASSWORD }}
+          volumeMounts:
+          - mountPath: /var/lib/pgsql/data
+            name: postgredb
+          serviceAccount: postgres
+          serviceAccountName: postgres
+      volumes:
+        - name: postgredb
+          persistentVolumeClaim:
+            claimName: {{ QUAY_PVC_NAME }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ QUAY_POSTGRESQL_APPNAME }}
+  namespace: {{ PROJECT_NAME }}
+  labels:
+    app: {{ QUAY_POSTGRESQL_APPNAME }}
+spec:
+  type: NodePort
+  ports:
+  - port: {{ POSTGRESQL_CONTAINER_PORT }}
+  selector:
+    app: {{ QUAY_POSTGRESQL_APPNAME }}

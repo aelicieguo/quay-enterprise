@@ -1,0 +1,33 @@
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: {{ QUAY_PV_NAME }}
+spec:
+  accessModes:
+  - ReadWriteOnce
+  capacity:
+    storage: {{ QUAY_PV_SIZE }}
+  claimRef:
+    apiVersion: v1
+    kind: PersistentVolumeClaim
+    name: {{ QUAY_PVC_NAME }}
+    namespace: {{ PROJECT_NAME }}
+  nfs:
+    path: {{ QUAY_PV_PATH }}
+    server: {{ QUAY_PV_SERVER }}
+  persistentVolumeReclaimPolicy: Retain
+status: {}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ QUAY_PVC_NAME }}
+  namespace: {{ PROJECT_NAME }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  volumeMode: Filesystem
+  resources:
+    requests:
+      storage: {{ QUAY_PV_SIZE }}

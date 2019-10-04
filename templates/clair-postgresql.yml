@@ -1,0 +1,55 @@
+---
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  labels:
+    app: {{ CLAIR_POSTGRESQL_APPNAME }}
+  name: {{ CLAIR_POSTGRESQL_APPNAME }}
+  namespace: {{ PROJECT_NAME }}
+spec:
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: {{ CLAIR_POSTGRESQL_APPNAME }}
+    spec:
+      containers:
+        - name: {{ CLAIR_POSTGRESQL_APPNAME }}
+          image: {{ POSTGRESQL_IMAGE }}
+          imagePullPolicy: IfNotPresent
+          ports:
+          - containerPort: {{ POSTGRESQL_CONTAINER_PORT }}
+            protocol: TCP
+          env:
+          - name: POSTGRESQL_USER
+            value: {{ CLAIR_POSTGRESQL_USERNAME }}
+          - name: POSTGRESQL_DATABASE
+            value: {{ CLAIR_POSTGRESQL_DB }}
+          - name: POSTGRESQL_PASSWORD
+            value: {{ CLAIR_POSTGRESQL_PASSWORD }}
+          volumeMounts:
+          - mountPath: /var/lib/pgsql/data
+            name: postgredb
+          serviceAccount: postgres
+          serviceAccountName: postgres
+      volumes:
+        - name: postgredb
+          persistentVolumeClaim:
+            claimName: {{ CLAIR_PVC_NAME }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: {{ CLAIR_POSTGRESQL_APPNAME }}
+  name: {{ CLAIR_POSTGRESQL_APPNAME }}
+  namespace: {{ PROJECT_NAME }}
+spec:
+  ports:
+  - nodePort: 30680
+    port: {{ POSTGRESQL_CONTAINER_PORT }}
+    protocol: TCP
+    targetPort: {{ POSTGRESQL_CONTAINER_PORT }}
+  selector:
+    app: {{ CLAIR_POSTGRESQL_APPNAME }}
+  type: NodePort

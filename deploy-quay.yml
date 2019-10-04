@@ -1,0 +1,478 @@
+---
+- name: Deploy quay enterprise
+  hosts: masters[0]
+  any_errors_fatal: true
+  vars_files:
+  - vars.yml
+  tasks:
+  - name: Login OCP as cluster-admin
+    command: 'oc login -u {{ ocUsername }} -p {{ ocPassword }}'
+
+  - name: Check if project exists
+    shell: oc projects | sed -e '1,2d' | sed -e '$d' | sed -e '$d' | sed -e 's/^[ \t]*//' | cut -d' ' -f 2
+    register: existing_ns
+
+  - name: Create project
+    command: 'oc new-project {{ PROJECT_NAME }}'
+    when: PROJECT_NAME not in existing_ns.stdout_lines
+
+  - name: Switch to project
+    command: 'oc project {{ PROJECT_NAME }}'
+    
+  - name: Create postgres serviceaccount
+    command: "oc create serviceaccount postgres -n {{ PROJECT_NAME }}"
+
+  - name: Grant anyuid scc to postgres service account
+    command: "oc adm policy add-scc-to-user anyuid system:serviceaccount:{{ PROJECT_NAME }}:postgres -n {{ PROJECT_NAME }}"
+
+  - name: Grant anyuid scc to default service account
+    command: "oc adm policy add-scc-to-user anyuid system:serviceaccount:{{ PROJECT_NAME }}:default -n {{ PROJECT_NAME }}"
+  
+  - name: Create quay pv config
+    template:
+      src: templates/quay-postgresql-pv.yml
+      dest: /tmp/quay-postgresql-pv.yml
+
+  - name: Deploy quay pv to project
+    command: "oc create -f /tmp/quay-postgresql-pv.yml -n {{ PROJECT_NAME }}"
+
+  - name: Remove quay pv config
+    file:
+      path: /tmp/quay-postgresql-pv.yml
+      state: absent
+
+  - name: Create clair pv config
+    template:
+      src: templates/clair-postgresql-pv.yml
+      dest: /tmp/clair-postgresql-pv.yml
+
+  - name: Deploy clair pv to project
+    command: "oc create -f /tmp/clair-postgresql-pv.yml -n {{ PROJECT_NAME }}"
+
+  - name: Remove clair pv config
+    file:
+      path: /tmp/clair-postgresql-pv.yml
+      state: absent
+      
+  - name: Create quay-enterprise-config-secret template
+    template:
+      src: templates/quay-enterprise-config-secret.yml
+      dest: /tmp/quay-enterprise-config-secret.yml
+      
+  - name: Create quay-enterprise-config-secret
+    command: "oc apply -f /tmp/quay-enterprise-config-secret.yml -n {{ PROJECT_NAME }}"
+
+  - name: Remove quay-enterprise-config-secret template
+    file:
+      path: /tmp/quay-enterprise-config-secret.yml
+      state: absent
+      
+  - name: Create pull-secret template
+    template:
+      src: templates/pull-secret.yml
+      dest: /tmp/pull-secret.yml
+      
+  - name: Create pull-secret
+    command: "oc apply -f /tmp/pull-secret.yml -n {{ PROJECT_NAME }}"
+
+  - name: Remove pull-secret template
+    file:
+      path: /tmp/pull-secret.yml
+      state: absent
+     
+  - name: Create clair-trust-ca-secret
+    command: 'oc create secret generic clair-trust-ca-secret --from-file=ca.crt=/etc/origin/master/ca.crt -n {{ PROJECT_NAME }}'
+ 
+  - name: Create quay postgresql template
+    template:
+      src: templates/quay-postgresql.yml
+      dest: /tmp/quay-postgresql.yml
+
+  - name: Deploy quay postgresql with persistent storage
+    command: "oc apply -f /tmp/quay-postgresql.yml -n {{ PROJECT_NAME }}"
+
+  - name: Remove quay postgresql template
+    file:
+      path: /tmp/quay-postgresql.yml
+      state: absent
+      
+  - name: Create clair postgresql template
+    template:
+      src: templates/clair-postgresql.yml
+      dest: /tmp/clair-postgresql.yml
+
+  - name: Deploy clair postgresql with persistent storage
+    command: "oc apply -f /tmp/clair-postgresql.yml -n {{ PROJECT_NAME }}"
+
+  - name: Remove clair postgresql template
+    file:
+      path: /tmp/clair-postgresql.yml
+      state: absent
+      
+  - name: Get postgresql pod name
+    shell: "oc get pod -o name -n {{ PROJECT_NAME }} | grep {{ QUAY_POSTGRESQL_APPNAME }} | grep -v deploy"
+    register: quay_postgresql_pod
+    until: quay_postgresql_pod.rc == 0
+
+  - name: Get postgresql service ip
+    command: oc get ep {{ QUAY_POSTGRESQL_APPNAME }} -o go-template='{{ "{{" }}index .subsets 0 "addresses" 0 "ip"{{ "}}" }}' -n {{ PROJECT_NAME }}
+    delay: 50
+    register: quay_postgresql_ep
+
+  - name: Check if quay-postgresql is ready
+    wait_for:
+      delay: 10
+      host: "{{ quay_postgresql_ep.stdout }}"
+      port: "{{ POSTGRESQL_CONTAINER_PORT }}"
+      state: started
+
+  - name: Create extension for quay postgresql
+    shell: >
+      oc exec -it -n {{ PROJECT_NAME }} {{ item|basename }} -- /bin/bash -c 'echo "CREATE EXTENSION IF NOT EXISTS pg_trgm" | /opt/rh/rh-postgresql10/root/usr/bin/psql -d quay'
+    with_items: "{{ quay_postgresql_pod.stdout_lines }}"
+    
+  - name: Create quay-rbac template
+    template:
+      src: templates/quay-rbac.yml
+      dest: /tmp/quay-rbac.yml
+
+  - name: Deploy quay-rbac
+    command: "oc apply -f /tmp/quay-rbac.yml -n {{ PROJECT_NAME }}"
+
+  - name: Remove quay-rbac template
+    file:
+      path: /tmp/quay-rbac.yml
+      state: absent
+      
+  - name: Create redis template
+    template:
+      src: templates/redis.yml
+      dest: /tmp/redis.yml
+
+  - name: Deploy redis
+    command: "oc apply -f /tmp/redis.yml -n {{ PROJECT_NAME }}"
+
+  - name: Remove redis template
+    file:
+      path: /tmp/redis.yml
+      state: absent
+       
+  - name: Create quay config template
+    template:
+      src: templates/quay-config.yml
+      dest: /tmp/quay-config.yml    
+      
+  - name: Deploy quay config
+    command: "oc apply -f /tmp/quay-config.yml -n {{ PROJECT_NAME }}"
+
+  - name: Remove quay config template
+    file:
+      path: /tmp/quay-config.yml
+      state: absent
+
+  - name: Create quay template
+    template:
+      src: templates/quay.yml
+      dest: /tmp/quay.yml
+
+  - name: Deploy quay app
+    command: "oc apply -f /tmp/quay.yml -n {{ PROJECT_NAME }}"
+
+  - name: Remove quay template
+    file:
+      path: /tmp/quay.yml
+      state: absent
+
+  - name: Set env for repository mirroring
+    command: 'oc set env deployment {{ QUAY_APPNAME }} QUAY_OVERRIDE_SERVICES="repomirrorworker=true" -n {{ PROJECT_NAME }}'
+
+  - name: Get quay-config route
+    shell: >
+      oc get route -n {{ PROJECT_NAME }} | grep {{ CONFIG_APPNAME }} | awk '{print $2}'
+    register: quay_config_route
+
+  - name: Get quay route
+    shell: >
+      oc get route -n {{ PROJECT_NAME }} | grep {{ QUAY_APPNAME }} | grep -v {{ CONFIG_APPNAME }} | awk '{print $2}'
+    register: quay_route
+
+  - set_fact:
+      QUAY_CONFIG_HOSTNAME: "{{ quay_config_route.stdout }}"
+
+  - set_fact:
+      QUAY_HOSTNAME: "{{ quay_route.stdout }}"
+
+#  - name: Setup quay-check registry status
+#    uri:
+#      validate_certs: no
+#      url: "https://{{ QUAY_CONFIG_HOSTNAME }}/api/v1/superuser/registrystatus"
+#      user: "{{ QUAY_CONFIG_USER }}"
+#      password: "{{ QUAY_CONFIG_PASSWORD }}"
+#
+#  - name: Setup quay-check config
+#    uri:
+#      validate_certs: no
+#      url: "https://{{ QUAY_CONFIG_HOSTNAME }}/api/v1/superuser/config"
+#     user: "{{ QUAY_CONFIG_USER }}"
+#     password: "{{ QUAY_CONFIG_PASSWORD }}"
+#
+# - name: Setup quay-initialize quay
+#   uri:
+#     validate_certs: no
+#     url: "https://{{ QUAY_CONFIG_HOSTNAME }}/api/v1/configapp/initialization"
+#     method: POST
+#     user: "{{ QUAY_CONFIG_USER }}"
+#     password: "{{ QUAY_CONFIG_PASSWORD }}"
+#
+# - name: Setup quay-validate database
+#   uri:
+#     validate_certs: no
+#     url: "https://{{ QUAY_CONFIG_HOSTNAME }}/api/v1/superuser/config"
+#     headers:
+#       Content-Type: application/json
+#     body_format: json
+#     body: 
+#       config: 
+#         DB_URI: "postgresql://{{ QUAY_POSTGRESQL_USERNAME }}:{{ QUAY_POSTGRESQL_PASSWORD }}@{{ QUAY_POSTGRESQL_APPNAME }}/quay"
+#     method: PUT
+#     user: "{{ QUAY_CONFIG_USER }}"
+#     password: "{{ QUAY_CONFIG_PASSWORD }}"
+#
+# - name: Setup quay-setupdb
+#   uri:
+#     validate_certs: no
+#     url: "https://{{ QUAY_CONFIG_HOSTNAME }}/api/v1/superuser/setupdb"
+#     method: GET
+#     user: "{{ QUAY_CONFIG_USER }}"
+#     password: "{{ QUAY_CONFIG_PASSWORD }}"
+#
+# - name: Setup quay-create superuser
+#   uri:
+#     validate_certs: no
+#     url: "https://{{ QUAY_CONFIG_HOSTNAME }}/api/v1/superuser/config/createsuperuser"
+#     headers: 
+#       Content-Type: application/json
+#     body_format: json
+#     body: 
+#       username: "{{ QUAY_ADMIN }}"
+#       email: "{{ QUAY_ADMIN_EMAIL }}"
+#       password: "{{ QUAY_ADMIN_PASSWORD }}"
+#       repeatPassword: "{{ QUAY_ADMIN_PASSWORD }}"
+#     method: POST
+#     user: "{{ QUAY_CONFIG_USER }}"
+#     password: "{{ QUAY_CONFIG_PASSWORD }}"
+#
+# - name: Setup quay-get superuserkey
+#   uri:
+#     validate_certs: no
+#     url: "https://{{ QUAY_CONFIG_HOSTNAME }}/api/v1/superuser/keys"
+#     method: GET
+#     user: "{{ QUAY_CONFIG_USER }}"
+#     password: "{{ QUAY_CONFIG_PASSWORD }}"
+#     return_cotent: yes
+#
+# - name: Setup quay-get superuserkey, write to file
+#   uri:
+#     validate_certs: no
+#     url: "https://{{ QUAY_CONFIG_HOSTNAME }}/api/v1/superuser/keys"
+#     headers:
+#       Content-Type: application/json
+#     body_format: json
+#     body:
+#       name: security_scanner Service Key
+#       service: security_scanner
+#       expiration: null
+#       notes: Created during setup for service `security_scanner`
+#     method: POST
+#     user: "{{ QUAY_CONFIG_USER }}"
+#     password: "{{ QUAY_CONFIG_PASSWORD }}"
+#     return_content: yes
+#     dest: /tmp/security_scanner.json
+#
+# - name: Setup quay-validate config
+#   uri:
+#     validate_certs: no
+#     url: "https://{{ QUAY_CONFIG_HOSTNAME }}/api/v1/superuser/config"
+#     headers: 
+#       Content-Type: application/json
+#     body_format: json
+#     body: 
+#       config: 
+#         SECURITY_SCANNER_ENDPOINT: "http://{{ CLAIR_SVC }}.{{ PROJECT_NAME }}.svc:6060"
+#         BUILDLOGS_REDIS:
+#           host: "{{ REDIS_APPNAME }}"
+#           port: "{{ REDIS_CONTAINER_PORT}}"
+#         USER_EVENTS_REDIS:
+#           host: "{{ REDIS_APPNAME }}"
+#           port: "{{ REDIS_CONTAINER_PORT }}"
+#         PREFERRED_URL_SCHEME: https
+#         SERVER_HOSTNAME: "{{ QUAY_HOSTNAME }}"
+#         EXTERNAL_TLS_TERMINATION: true
+#         SUPER_USERS: 
+#         - "{{ QUAY_ADMIN }}"
+#         GITHUB_TRIGGER_CONFIG: ""
+#         DISTRIBUTED_STORAGE_DEFAULT_LOCATIONS: []
+#         GITHUB_LOGIN_CONFIG: ""
+#         GITLAB_TRIGGER_KIND: ""
+#         SETUP_COMPLETE: true
+#         FEATURE_SECURITY_SCANNER: true
+#         DB_URI: "postgresql://{{ QUAY_POSTGRESQL_USERNAME }}:{{ QUAY_POSTGRESQL_PASSWORD }}@{{ QUAY_POSTGRESQL_APPNAME }}/quay"
+#       exists: true
+#     method: PUT
+#     user: "{{ QUAY_CONFIG_USER }}"
+#     password: "{{ QUAY_CONFIG_PASSWORD }}"
+#
+# - name: Verify quay config
+#   uri:
+#     validate_certs: no
+#     url: "https://{{ QUAY_CONFIG_HOSTNAME }}/api/v1/superuser/config"
+#     headers:
+#       Content-Type: application/json
+#     body_format: json
+#     user: "{{ QUAY_CONFIG_USER }}"
+#     password: "{{ QUAY_CONFIG_PASSWORD }}"
+#     return_content: yes
+#     dest: /tmp/config.json
+#
+# - name: Fetch config file
+#   fetch:
+#     src: /tmp/config.json
+#     dest: config.json
+#     flat: yes
+#
+# - name: Verify quay redis
+#   uri:
+#     validate_certs: no
+#     url: "https://{{ QUAY_CONFIG_HOSTNAME }}/api/v1/superuser/config/validate/redis"
+#     headers: 
+#       Content-Type: application/json
+#     method: POST
+#     body_format: json
+#     body: "{{ lookup('file','config.json') }}"
+#     user: "{{ QUAY_CONFIG_USER }}"
+#     password: "{{ QUAY_CONFIG_PASSWORD }}"
+#
+# - name: Verify quay time machine
+#   uri:
+#     validate_certs: no
+#     url: "https://{{ QUAY_CONFIG_HOSTNAME }}/api/v1/superuser/config/validate/time-machine"
+#     headers:
+#       Content-Type: application/json
+#     method: POST
+#     body_format: json
+#     body: "{{ lookup('file','config.json') }}"
+#     user: "{{ QUAY_CONFIG_USER }}"
+#     password: "{{ QUAY_CONFIG_PASSWORD }}"
+#
+# - name: Verify quay access
+#   uri:
+#     validate_certs: no
+#     url: "https://{{ QUAY_CONFIG_HOSTNAME }}/api/v1/superuser/config/validate/access"
+#     headers:
+#       Content-Type: application/json
+#     method: POST
+#     body_format: json
+#     body: "{{ lookup('file','config.json') }}"
+#     user: "{{ QUAY_CONFIG_USER }}"
+#     password: "{{ QUAY_CONFIG_PASSWORD }}"
+#
+# - name: Verify quay ssl
+#   uri:
+#     validate_certs: no
+#     url: "https://{{ QUAY_CONFIG_HOSTNAME }}/api/v1/superuser/config/validate/ssl"
+#     headers: 
+#       Content-Type: application/json
+#     method: POST
+#     body_format: json
+#     body: "{{ lookup('file','config.json') }}"
+#     user: "{{ QUAY_CONFIG_USER }}"
+#     password: "{{ QUAY_CONFIG_PASSWORD }}"
+#
+# - name: Verify quay security scanner
+#   uri:
+#     validate_certs: no
+#     url: "https://{{ QUAY_CONFIG_HOSTNAME }}/api/v1/superuser/config/validate/security-scanner"
+#     headers: 
+#       Content-Type: application/json
+#     method: POST
+#     body_format: json
+#     body: "{{ lookup('file','config.json') }}"
+#     user: "{{ QUAY_CONFIG_USER }}"
+#     password: "{{ QUAY_CONFIG_PASSWORD }}"
+#
+# - name: Complete quay setup
+#    command: >
+#      curl -k --user {{ QUAY_CONFIG_USER }}:{{ QUAY_CONFIG_PASSWORD }} -H "Content-Type: application/json" -X POST https://{{ QUAY_CONFIG_HOSTNAME }}/api/v1/kubernetes/config -d '{}'
+#   uri:
+#     validate_certs: no
+#     url: "https://{{ QUAY_CONFIG_HOSTNAME }}/api/v1/kubernetes/config"
+#     headers: 
+#       Content-Type: application/json
+#     method: POST
+#     body_format: json
+#     body: '{}'
+#     user: "{{ QUAY_CONFIG_USER }}"
+#     password: "{{ QUAY_CONFIG_PASSWORD }}"
+#     return_content: yes
+#
+# - name: Fetch security_scanner file
+#   fetch:
+#     src: /tmp/security_scanner.json
+#     dest: security_scanner.json
+#     flat: yes
+#
+# - name: Read security_scanner json file
+#   set_fact:
+#     security_scanner: "{{ lookup('file','security_scanner.json')  }}"
+#
+# - name: Write security_scanner pem file
+#   copy:
+#    content: "{{ security_scanner['private_key'] }}"
+#    dest: /tmp/security_scanner.pem
+
+  - pause:
+      prompt: "Please configure Quay from the UI and create the security_scanner.pem file"
+
+  - set_fact:
+      key_id: "{{ lookup('file','key_id') }}"
+
+  - name: Create clair scanner pem
+    copy:
+      src: security_scanner.pem
+      dest: /tmp/security_scanner.pem
+
+  - name: Create clair config
+    template:
+      src: templates/clair-config.yml
+      dest: /tmp/clair-config.yml
+
+  - name: Create clair secret config
+    command : "oc create secret generic {{ CLAIR_SCANNER_SECRET }} --from-file=config.yaml=/tmp/clair-config.yml --from-file=security_scanner.pem=/tmp/security_scanner.pem -n {{ PROJECT_NAME }}"
+
+  - name: Remove clair secret config
+    file:
+      path: /tmp/clair-config.yml
+      state: absent
+
+  - name: Create clair template
+    template:
+      src: templates/clair.yml
+      dest: /tmp/clair.yml
+
+  - name: Deploy clair
+    command: "oc create -f /tmp/clair.yml -n {{ PROJECT_NAME }}"
+
+  - name: Remove clair template
+    file:
+      path: /tmp/clair.yml
+      state: absent
+
+  - name: Remove files from remote server
+    file:
+      path: "/tmp/{{ item }}"
+      state: absent
+    with_items: 
+    - security_scanner.json
+    - security_scanner.pem
+    - clair-trust-ca.crt 
+    - config.json
